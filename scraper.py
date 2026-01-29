@@ -14,7 +14,10 @@ def extract_next_links(url, resp):
     # resp.raw_response: this is where the page actually is. More specifically, the raw_response has two parts:
     #         resp.raw_response.url: the url, again
     #         resp.raw_response.content: the content of the page!
-    # Return a list with the hyperlinks (as strings) scrapped from resp.raw_response.content
+    # Return a list with the hyperlinks (as strings) scraped from resp.raw_response.content
+    
+    # Idea: have an extract_text function as a black box for this function
+
     return list()
 
 def is_valid(url):
