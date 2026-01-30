@@ -1,5 +1,14 @@
 import re
 from urllib.parse import urlparse
+from typing import Iterable, Tuple
+
+
+MAX_HTML_BYTES = 5_000_000
+MAX_SIGNATURE_REPEATS = 10
+MIN_WORDS = 50
+
+# To count the signature for similarity of pages
+signature_counts = {}
 
 def scraper(url, resp):
     links = extract_next_links(url, resp)
@@ -15,7 +24,48 @@ def extract_next_links(url, resp):
     #         resp.raw_response.url: the url, again
     #         resp.raw_response.content: the content of the page!
     # Return a list with the hyperlinks (as strings) scrapped from resp.raw_response.content
-    return list()
+    html = resp.raw_response.content
+    if not html:
+        return []
+    
+    if len(html) > MAX_HTML_BYTES: # Determine very large files
+        return []
+    
+    tokens = extract_text(url, html)
+
+    words, urls = [], []
+    for v, t in tokens:
+        if t == "word": words.append(v)
+        elif t == "URL": urls.append(v)
+    
+    word_count = len(words)   # To determine the information
+
+    signature = " ".join(words[:200])
+    if similarity_compare(signature): # Build similarity signature/report
+        return []               
+
+    if word_count < MIN_WORDS:
+        return []
+    
+    return urls
+
+
+
+def extract_text(url: str, html: bytes) -> Iterable[Tuple[str, str]]:
+    # Parses the html
+    # Yields a stream of tokens of either words or URLS with an identifier constructed as Tuple
+    # EX: ("hello", "word"), ("www..ics.uci.edu/", "URL")
+    raise NotImplementedError
+
+def similarity_compare(signature: str)-> bool:
+    # Stores signatures of Pages into a Dictionary
+    # If signature count reaches threshold, Don't extract URL from page
+    if signature in signature_counts:
+        signature_counts[signature] += 1
+    else:
+        signature_counts[signature] = 1
+    
+    return signature_counts[signature] > MAX_SIGNATURE_REPEATS
 
 def is_valid(url):
     # Decide whether to crawl this url or not. 
