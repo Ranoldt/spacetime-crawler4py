@@ -1,9 +1,10 @@
 import re
 from urllib.parse import urlparse
 from typing import Iterable, Tuple
+from bs4 import BeautifulSoup
 
 
-MAX_HTML_BYTES = 5_000_000
+MAX_HTML_BYTES = 5000000
 MAX_SIGNATURE_REPEATS = 10
 MIN_WORDS = 50
 
@@ -24,38 +25,36 @@ def extract_next_links(url, resp):
     #         resp.raw_response.url: the url, again
     #         resp.raw_response.content: the content of the page!
     # Return a list with the hyperlinks (as strings) scrapped from resp.raw_response.content
-    html = resp.raw_response.content
-    if not html:
+    raw_response = resp.raw_response
+    if not raw_response: 
         return []
-    
-    if len(html) > MAX_HTML_BYTES: # Determine very large files
+    html = raw_response.content
+    if not html: 
         return []
+    soup = BeautifulSoup(html, 'lxml')
+    urls = []
+    for link in soup.find_all('a'):
+        # TODO: defragment url
+        urls.append(link.get('href'))
+        # print(link.get('href'))
+
+    # if not html:
+    #     return []
     
-    tokens = extract_text(url, html)
-
-    words, urls = [], []
-    for v, t in tokens:
-        if t == "word": words.append(v)
-        elif t == "URL": urls.append(v)
+    # if len(html) > MAX_HTML_BYTES: # Determine very large files
+    #     return []
     
-    word_count = len(words)   # To determine the information
+    # word_count = len(words)   # To determine the information
 
-    signature = " ".join(words[:200])
-    if similarity_compare(signature): # Build similarity signature/report
-        return []               
+    # signature = " ".join(words[:200])
+    # if similarity_compare(signature): # Build similarity signature/report
+    #     return []               
 
-    if word_count < MIN_WORDS:
-        return []
+    # if word_count < MIN_WORDS:
+    #     return []
     
     return urls
-
-
-
-def extract_text(url: str, html: bytes) -> Iterable[Tuple[str, str]]:
-    # Parses the html
-    # Yields a stream of tokens of either words or URLS with an identifier constructed as Tuple
-    # EX: ("hello", "word"), ("www..ics.uci.edu/", "URL")
-    raise NotImplementedError
+    
 
 def similarity_compare(signature: str)-> bool:
     # Stores signatures of Pages into a Dictionary
@@ -74,6 +73,8 @@ def is_valid(url):
     try:
         parsed = urlparse(url)
         if parsed.scheme not in set(["http", "https"]):
+            return False
+        if "ics.uci.edu" not in parsed.netloc and "cs.uci.edu" not in parsed.netloc and "informatics.uci.edu" not in parsed.netloc and "stat.uci.edu" not in parsed.netloc: 
             return False
         return not re.match(
             r".*\.(css|js|bmp|gif|jpe?g|ico"
