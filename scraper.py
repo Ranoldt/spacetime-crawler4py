@@ -54,6 +54,44 @@ def extract_next_links(url, resp):
     #     return []
     
     return urls
+
+# O(n) where n is the length of the token string
+def format_alphanum(token):
+    current = -1
+    formatted_token = []
+    for i in range(len(token)):
+        if not token[i].isalnum():
+            formatted_token.append(token[current+1:i].lower())
+            current = i
+    formatted_token.append(token[current+1:].lower())
+    return formatted_token
+
+def extract_text(html: bytes) -> Iterable[Tuple[str, str]]:
+    # creates a BeautifulSoup object that helps parse html beautifully
+    # make sure to run {pip install beautifulsoup4}
+    parser = BeautifulSoup(html, "html.parser")
+    # we parse through each item in the html
+
+    do_not_parse = {'style', 'title', '[document]', 'script', 'meta', 'head'}
+
+    for item in parser.body.find_all(True):
+        # ensures that we DO NOT PARSE through potential style objects or javascript
+        if item.name in do_not_parse:
+            continue
+        # we will only parse text from the parent once bc of recursive=False
+        text = "".join(item.find_all(string=True, recursive=False)).strip()
+        if (item.name == 'a' and item.get("href")):
+            yield item.get("href"), "URL"
+        if (text):
+            # split text into tokens (split on whitespace)
+            tokens = format_alphanum(text)
+            # list to store formatted tokens where token is first converted to lowercase then made into a Token object            
+            for token in tokens:
+                if token:
+                    yield token, "word"
+    # Parses the html
+    # Yields a stream of tokens of either words or URLS with an identifier constructed as Tuple
+    # EX: ("hello", "word"), ("www..ics.uci.edu/", "URL")
     
 
 def similarity_compare(signature: str)-> bool:
@@ -89,3 +127,4 @@ def is_valid(url):
     except TypeError:
         print ("TypeError for ", parsed)
         raise
+
