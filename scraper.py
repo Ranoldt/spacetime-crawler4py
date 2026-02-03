@@ -2,8 +2,6 @@ import re
 from urllib.parse import urlparse, urljoin, urldefrag
 from typing import Iterable, Tuple
 from bs4 import BeautifulSoup
-import hashlib
-
 
 MAX_HTML_BYTES = 5000000
 MAX_SIGNATURE_REPEATS = 10
@@ -72,9 +70,15 @@ def make_shingles(words, k = 5):
         yield " ".join(words[i:i+k])
 
 def encode_shingle(words):
-    # Uses hashlib.blake2b hashfunction to encode shingle into 64 bit int
-    h = hashlib.blake2b(words.encode("utf-8"), digest_size=8).digest()
-    return int.from_bytes(h, byteorder="big", signed=False)
+    # Encodes using a FNV-1a hash function
+    h = 14695981039346656037  # offset basis
+    fnv_prime = 1099511628211
+
+    for b in words.encode("utf-8"):
+        h ^= b
+        h = (h * fnv_prime) & 0xFFFFFFFFFFFFFFFF  # keep 64 bits
+
+    return h
 
 def bit_difference(a, b):
     # Compute distance between two 64-bit integers.
