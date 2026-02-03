@@ -1,5 +1,15 @@
 import re
 from urllib.parse import urlparse
+from typing import Iterable, Tuple
+from bs4 import BeautifulSoup
+
+
+MAX_HTML_BYTES = 5000000
+MAX_SIGNATURE_REPEATS = 10
+MIN_WORDS = 50
+
+# To count the signature for similarity of pages
+signature_counts = {}
 
 def scraper(url, resp):
     links = extract_next_links(url, resp)
@@ -14,11 +24,47 @@ def extract_next_links(url, resp):
     # resp.raw_response: this is where the page actually is. More specifically, the raw_response has two parts:
     #         resp.raw_response.url: the url, again
     #         resp.raw_response.content: the content of the page!
-    # Return a list with the hyperlinks (as strings) scraped from resp.raw_response.content
-    
-    # Idea: have an extract_text function as a black box for this function
+    # Return a list with the hyperlinks (as strings) scrapped from resp.raw_response.content
+    raw_response = resp.raw_response
+    if not raw_response: 
+        return []
+    html = raw_response.content
+    if not html: 
+        return []
+    soup = BeautifulSoup(html, 'lxml')
+    urls = []
+    for link in soup.find_all('a'):
+        # TODO: defragment url
+        urls.append(link.get('href'))
+        # print(link.get('href'))
 
-    return list()
+    # if not html:
+    #     return []
+    
+    # if len(html) > MAX_HTML_BYTES: # Determine very large files
+    #     return []
+    
+    # word_count = len(words)   # To determine the information
+
+    # signature = " ".join(words[:200])
+    # if similarity_compare(signature): # Build similarity signature/report
+    #     return []               
+
+    # if word_count < MIN_WORDS:
+    #     return []
+    
+    return urls
+    
+
+def similarity_compare(signature: str)-> bool:
+    # Stores signatures of Pages into a Dictionary
+    # If signature count reaches threshold, Don't extract URL from page
+    if signature in signature_counts:
+        signature_counts[signature] += 1
+    else:
+        signature_counts[signature] = 1
+    
+    return signature_counts[signature] > MAX_SIGNATURE_REPEATS
 
 def is_valid(url):
     # Decide whether to crawl this url or not. 
@@ -27,6 +73,8 @@ def is_valid(url):
     try:
         parsed = urlparse(url)
         if parsed.scheme not in set(["http", "https"]):
+            return False
+        if "ics.uci.edu" not in parsed.netloc and "cs.uci.edu" not in parsed.netloc and "informatics.uci.edu" not in parsed.netloc and "stat.uci.edu" not in parsed.netloc: 
             return False
         return not re.match(
             r".*\.(css|js|bmp|gif|jpe?g|ico"
