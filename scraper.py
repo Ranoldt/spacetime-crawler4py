@@ -1,5 +1,5 @@
 import re
-from urllib.parse import urlparse, urldefrag, urljoin
+from urllib.parse import urlparse, urldefrag, urljoin, parse_qsl, parse_qs, urlencode
 from typing import Iterable, Tuple
 from bs4 import BeautifulSoup
 from utils import get_logger
@@ -107,6 +107,8 @@ def extract_next_links(url, resp):
     urls = []
     for link in soup.find_all('a'):
         next_url = link.get('href')
+        if "nofollow" in link.get("rel", []): # avoid share links
+            continue
         if next_url: 
             abs_url = urljoin(url, next_url)
             norm_url = normalize_url(abs_url)
@@ -183,6 +185,12 @@ def is_valid(url):
         if len(url) > MAX_URL_LEN: # potential crawler trap: URL getting longer
             return False
         parsed = urlparse(url)
+        if "/events/" in parsed.path: # calendar trap
+            logger.info(f"detected and skipped calendar trap at: {url}")
+            return False
+        if "do" in parse_qs(parsed.query): # do=_ query trap
+            logger.info(f"detected and skipped do=_ query trap at: {url}")
+            return False
         if parsed.scheme not in set(["http", "https"]):
             return False
         if "ics.uci.edu" not in parsed.netloc and "cs.uci.edu" not in parsed.netloc and "informatics.uci.edu" not in parsed.netloc and "stat.uci.edu" not in parsed.netloc: 
@@ -220,7 +228,14 @@ def normalize_url(url):
 
     new_url += p.path
     if p.query:
-        new_url += f"?{p.query}"
+        # handling C=_;O=_ trap
+        query = p.query.replace(";", "&")
+        kept = [
+            (k, v) for (k, v) in parse_qsl(query, keep_blank_values=True)
+            if k.lower() not in {"c", "o"}
+        ]
+        new_query = urlencode(kept, doseq=True)
+        new_url += f"?{new_query}"
 
     return new_url
 
