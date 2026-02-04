@@ -110,7 +110,10 @@ def extract_next_links(url, resp):
         if "nofollow" in link.get("rel", []): # avoid share links
             continue
         if next_url: 
-            abs_url = urljoin(url, next_url)
+            try: 
+                abs_url = urljoin(url, next_url)
+            except ValueError: # not joinable, next_url must be invalid
+                continue
             norm_url = normalize_url(abs_url)
             if norm_url is not None:
                 urls.append(norm_url)
@@ -185,9 +188,6 @@ def is_valid(url):
         if len(url) > MAX_URL_LEN: # potential crawler trap: URL getting longer
             return False
         parsed = urlparse(url)
-        if "/events/" in parsed.path: # calendar trap TODO: is this really though? https://connectedlearning.uci.edu/events/
-            logger.info(f"detected and skipped calendar trap at: {url}")
-            return False
         if "do" in parse_qs(parsed.query): # do=_ query trap
             logger.info(f"detected and skipped do=_ query trap at: {url}")
             return False
@@ -204,7 +204,7 @@ def is_valid(url):
             + r"|data|dat|exe|bz2|tar|msi|bin|7z|psd|dmg|iso"
             + r"|epub|dll|cnf|tgz|sha1"
             + r"|thmx|mso|arff|rtf|jar|csv"
-            + r"|rm|smil|wmv|swf|wma|zip|rar|gz)$", parsed.path.lower())
+            + r"|rm|smil|wmv|swf|wma|zip|rar|gz|war)$", parsed.path.lower())
 
     except TypeError:
         print ("TypeError for ", parsed)
@@ -228,6 +228,20 @@ def normalize_url(url):
         new_url += f":{p.port}"
 
     new_url += p.path
+
+    if p.netloc == "grape.ics.uci.edu": # handling grape.ics.uci.edu trap
+        if "wiki" in p.path and "timeline" in p.path:
+            return None
+        queries = parse_qs(p.query)
+        if "action" in queries: 
+            return None
+        if "version" in queries: 
+            return None
+
+    if (p.netloc=="isg.ics.uci.edu" or p.netloc=="wics.ics.uci.edu") and "/events/" in p.path: # calendar trap
+        logger.info(f"detected and skipped calendar trap at: {url}")
+        return None
+
     if p.query:
         # handling C=_;O=_ trap
         query = p.query.replace(";", "&")
