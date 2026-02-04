@@ -1,5 +1,5 @@
 import re
-from urllib.parse import urlparse, urldefrag
+from urllib.parse import urlparse, urldefrag, urljoin
 from typing import Iterable, Tuple
 from bs4 import BeautifulSoup
 from utils import get_logger
@@ -106,10 +106,14 @@ def extract_next_links(url, resp):
 
     urls = []
     for link in soup.find_all('a'):
-        url = link.get('href')
-        if url: 
-            url = normalize_url(url)
-            urls.append(url)
+        next_url = link.get('href')
+        if next_url: 
+            abs_url = urljoin(url, next_url)
+            norm_url = normalize_url(abs_url)
+            if norm_url is not None:
+                urls.append(norm_url)
+            else: 
+                logger.info(f"invalid url not appended: {next_url}")
         # print(link.get('href'))
     
     # word_count = len(words)   # To determine the information
@@ -198,18 +202,26 @@ def is_valid(url):
         raise
 
 def normalize_url(url): 
-    url = urlparse(url)
-    new_url = ""
-    if not url.scheme: 
-        new_url = f"https://{url.hostname}"
-    else: 
-        new_url = f"{url.scheme}://{url.hostname}"
-    if not url.port or url.port == 80: 
-        new_url += url.path
-    else: 
-        new_url += f":{url.port}{url.path}"
-    if url.query: 
-        new_url += f"?{url.query}"
+    try:
+        p = urlparse(url)
+    except ValueError:
+        return None
+
+    if p.scheme not in ("http", "https"):
+        return None
+
+    if p.hostname is None:
+        return None
+
+    new_url = f"{p.scheme}://{p.hostname}"
+    
+    if p.port and p.port not in (80, 443):
+        new_url += f":{p.port}"
+
+    new_url += p.path
+    if p.query:
+        new_url += f"?{p.query}"
+
     return new_url
 
 def finish(): # print out statistics
