@@ -185,7 +185,7 @@ def is_valid(url):
         if len(url) > MAX_URL_LEN: # potential crawler trap: URL getting longer
             return False
         parsed = urlparse(url)
-        if "/events/" in parsed.path: # calendar trap
+        if "/events/" in parsed.path: # calendar trap TODO: is this really though? https://connectedlearning.uci.edu/events/
             logger.info(f"detected and skipped calendar trap at: {url}")
             return False
         if "do" in parse_qs(parsed.query): # do=_ query trap
@@ -193,7 +193,8 @@ def is_valid(url):
             return False
         if parsed.scheme not in set(["http", "https"]):
             return False
-        if "ics.uci.edu" not in parsed.netloc and "cs.uci.edu" not in parsed.netloc and "informatics.uci.edu" not in parsed.netloc and "stat.uci.edu" not in parsed.netloc: 
+        allowed = {"ics.uci.edu", "cs.uci.edu", "informatics.uci.edu", "stat.uci.edu"}
+        if not any(parsed.hostname == d or parsed.hostname.endswith("." + d) for d in allowed):
             return False
         return not re.match(
             r".*\.(css|js|bmp|gif|jpe?g|ico"
