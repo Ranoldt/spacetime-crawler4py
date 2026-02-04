@@ -1,21 +1,57 @@
 import re
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urldefrag
 from typing import Iterable, Tuple
 from bs4 import BeautifulSoup
+from utils import get_logger
+from collections import defaultdict
+from collections import Counter
+import re
 
 
 MAX_HTML_BYTES = 5000000
 MAX_SIGNATURE_REPEATS = 10
 MIN_WORDS = 50
+MAX_URL_LEN = 115
 
 # To count the signature for similarity of pages
 signature_counts = {}
+logger = get_logger("CRAWLER")
+
+found_pages = set()
+longest_page, longest_length = "", 0
+word_freq = defaultdict(int)
+STOP_WORDS = {
+    "a", "about", "above", "after", "again", "against", "all", "am", "an", "and",
+    "any", "are", "aren't", "as", "at", "be", "because", "been", "before", "being",
+    "below", "between", "both", "but", "by", "can't", "cannot", "could", "couldn't",
+    "did", "didn't", "do", "does", "doesn't", "doing", "don't", "down", "during",
+    "each", "few", "for", "from", "further", "had", "hadn't", "has", "hasn't",
+    "have", "haven't", "having", "he", "he'd", "he'll", "he's", "her", "here",
+    "here's", "hers", "herself", "him", "himself", "his", "how", "how's", "i",
+    "i'd", "i'll", "i'm", "i've", "if", "in", "into", "is", "isn't", "it", "it's",
+    "its", "itself", "let's", "me", "more", "most", "mustn't", "my", "myself",
+    "no", "nor", "not", "of", "off", "on", "once", "only", "or", "other", "ought",
+    "our", "ours", "ourselves", "out", "over", "own", "same", "shan't", "she",
+    "she'd", "she'll", "she's", "should", "shouldn't", "so", "some", "such", "than",
+    "that", "that's", "the", "their", "theirs", "them", "themselves", "then",
+    "there", "there's", "these", "they", "they'd", "they'll", "they're", "they've",
+    "this", "those", "through", "to", "too", "under", "until", "up", "very", "was",
+    "wasn't", "we", "we'd", "we'll", "we're", "we've", "were", "weren't", "what",
+    "what's", "when", "when's", "where", "where's", "which", "while", "who",
+    "who's", "whom", "why", "why's", "with", "won't", "would", "wouldn't", "you",
+    "you'd", "you'll", "you're", "you've", "your", "yours", "yourself",
+    "yourselves"
+}
+
+sub_domains = defaultdict(int)
+
 
 def scraper(url, resp):
     links = extract_next_links(url, resp)
     return [link for link in links if is_valid(link)]
 
 def extract_next_links(url, resp):
+    global longest_page, longest_length
     # Implementation required.
     # url: the URL that was used to get the page
     # resp.url: the actual url of the page
@@ -25,24 +61,56 @@ def extract_next_links(url, resp):
     #         resp.raw_response.url: the url, again
     #         resp.raw_response.content: the content of the page!
     # Return a list with the hyperlinks (as strings) scrapped from resp.raw_response.content
+    found_pages.add(urldefrag(url).url)
+    sub_domains[urlparse(url).hostname] += 1
+
+    if resp.status != 200: # TODO: make this less strict?
+        return []
+
+    if resp.error: 
+        return []
+
     raw_response = resp.raw_response
     if not raw_response: 
         return []
+
     html = raw_response.content
     if not html: 
         return []
+
     soup = BeautifulSoup(html, 'lxml')
+    words = soup.get_text()
+    words = re.findall("\w+(?:'\w+)?|[^\w\s]", words)
+    for word in words: 
+        if word not in STOP_WORDS: 
+            word_freq[word] += 1
+
+    if len(words) == 0: # no information
+        return []
+
+    # TODO: infinite traps
+
+    value_score = len(words)/len(html)
+
+    if len(html) > MAX_HTML_BYTES: # low value pages
+        logger.info(f"ignoring url {url} with page size: {len(resp.raw_response.content)}")
+        return []
+    if len(html) > MAX_HTML_BYTES/2 and value_score < 0.05: # low value pages
+        logger.info(f"ignoring url {url} with page size: {len(resp.raw_response.content)}, value_score: {value_score}")
+        return []
+
+    if len(words) > longest_length: 
+        longest_length = len(words)
+        longest_page = url
+    
+
     urls = []
     for link in soup.find_all('a'):
-        # TODO: defragment url
-        urls.append(link.get('href'))
+        url = link.get('href')
+        if url: 
+            url = normalize_url(url)
+            urls.append(url)
         # print(link.get('href'))
-
-    # if not html:
-    #     return []
-    
-    # if len(html) > MAX_HTML_BYTES: # Determine very large files
-    #     return []
     
     # word_count = len(words)   # To determine the information
 
@@ -52,7 +120,6 @@ def extract_next_links(url, resp):
 
     # if word_count < MIN_WORDS:
     #     return []
-    
     return urls
 
 # O(n) where n is the length of the token string
@@ -109,6 +176,8 @@ def is_valid(url):
     # If you decide to crawl it, return True; otherwise return False.
     # There are already some conditions that return False.
     try:
+        if len(url) > MAX_URL_LEN: # potential crawler trap: URL getting longer
+            return False
         parsed = urlparse(url)
         if parsed.scheme not in set(["http", "https"]):
             return False
@@ -127,4 +196,27 @@ def is_valid(url):
     except TypeError:
         print ("TypeError for ", parsed)
         raise
+
+def normalize_url(url): 
+    url = urlparse(url)
+    new_url = ""
+    if not url.scheme: 
+        new_url = f"https://{url.hostname}"
+    else: 
+        new_url = f"{url.scheme}://{url.hostname}"
+    if not url.port or url.port == 80: 
+        new_url += url.path
+    else: 
+        new_url += f":{url.port}{url.path}"
+    if url.query: 
+        new_url += f"?{url.query}"
+    return new_url
+
+def finish(): # print out statistics
+    logger.info(f"unique pages: {len(found_pages)}")
+    logger.info(f"longest page: {longest_page}, length: {longest_length}")
+    logger.info(f"most common 50: {Counter(word_freq).most_common(50)}")
+    logger.info(f"subdomains: ")
+    for key, value in sorted(subdomains.items()): 
+        logger.info(f"{key}, {value}")
 
