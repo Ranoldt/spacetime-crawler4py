@@ -15,7 +15,7 @@ MAX_URL_LEN = 115
 
 # To count the signature for similarity of pages
 signature_counts = {}
-logger = get_logger("CRAWLER")
+logger = get_logger("SCRAPER")
 
 found_pages = set()
 longest_page, longest_length = "", 0
@@ -80,8 +80,9 @@ def extract_next_links(url, resp):
 
     soup = BeautifulSoup(html, 'lxml')
     words = soup.get_text()
-    words = re.findall("\w+(?:'\w+)?|[^\w\s]", words)
+    words = re.findall(r"\w+(?:'\w+)?", words)
     for word in words: 
+        word = word.lower()
         if word not in STOP_WORDS: 
             word_freq[word] += 1
 
@@ -261,6 +262,6 @@ def finish(): # print out statistics
     logger.info(f"longest page: {longest_page}, length: {longest_length}")
     logger.info(f"most common 50: {Counter(word_freq).most_common(50)}")
     logger.info(f"subdomains: ")
-    for key, value in sorted(subdomains.items()): 
+    for key, value in sorted(sub_domains.items()): 
         logger.info(f"{key}, {value}")
 
