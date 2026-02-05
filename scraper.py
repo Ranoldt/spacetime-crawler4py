@@ -48,7 +48,7 @@ sub_domains = defaultdict(int)
 
 def scraper(url, resp):
     links = extract_next_links(url, resp)
-    return [link for link in links if is_valid(link)]
+    return [link for link in links]
 
 def extract_next_links(url, resp):
     global longest_page, longest_length
@@ -115,10 +115,8 @@ def extract_next_links(url, resp):
             except ValueError: # not joinable, next_url must be invalid
                 continue
             norm_url = normalize_url(abs_url)
-            if norm_url is not None:
+            if norm_url and is_valid(norm_url):
                 urls.append(norm_url)
-            else: 
-                logger.info(f"invalid url not appended: {next_url}")
         # print(link.get('href'))
     
     # word_count = len(words)   # To determine the information
@@ -188,14 +186,31 @@ def is_valid(url):
         if len(url) > MAX_URL_LEN: # potential crawler trap: URL getting longer
             return False
         parsed = urlparse(url)
-        if "do" in parse_qs(parsed.query): # do=_ query trap
-            logger.info(f"detected and skipped do=_ query trap at: {url}")
-            return False
+
         if parsed.scheme not in set(["http", "https"]):
             return False
+
         allowed = {"ics.uci.edu", "cs.uci.edu", "informatics.uci.edu", "stat.uci.edu"}
         if not any(parsed.hostname == d or parsed.hostname.endswith("." + d) for d in allowed):
             return False
+
+        if "do" in parse_qs(parsed.query): # do=_ query trap
+            logger.info(f"detected and skipped do=_ query trap at: {url}")
+            return False
+
+        if parsed.netloc == "grape.ics.uci.edu": # handling grape.ics.uci.edu trap
+            if "wiki" in parsed.path and "timeline" in parsed.path:
+                return False
+            queries = parse_qs(parsed.query)
+            if "action" in queries: 
+                return False
+            if "version" in queries: 
+                return False
+
+        if (parsed.netloc=="isg.ics.uci.edu" or parsed.netloc=="wics.ics.uci.edu" or parsed.netloc=="ics.uci.edu") and parsed.path.startswith("/events"): # calendar trap
+            logger.info(f"detected and skipped calendar trap at: {url}")
+            return False
+
         return not re.match(
             r".*\.(css|js|bmp|gif|jpe?g|ico"
             + r"|png|tiff?|mid|mp2|mp3|mp4"
@@ -229,21 +244,8 @@ def normalize_url(url):
 
     new_url += p.path
 
-    if p.netloc == "grape.ics.uci.edu": # handling grape.ics.uci.edu trap
-        if "wiki" in p.path and "timeline" in p.path:
-            return None
-        queries = parse_qs(p.query)
-        if "action" in queries: 
-            return None
-        if "version" in queries: 
-            return None
-
-    if (p.netloc=="isg.ics.uci.edu" or p.netloc=="wics.ics.uci.edu") and "/events/" in p.path: # calendar trap
-        logger.info(f"detected and skipped calendar trap at: {url}")
-        return None
-
     if p.query:
-        # handling C=_;O=_ trap
+        # handling C=_;O=_ trap: just remove those parameters
         query = p.query.replace(";", "&")
         kept = [
             (k, v) for (k, v) in parse_qsl(query, keep_blank_values=True)
