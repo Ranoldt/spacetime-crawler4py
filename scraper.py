@@ -5,13 +5,11 @@ from bs4 import BeautifulSoup
 from utils import get_logger
 from collections import defaultdict
 from collections import Counter
-import re
-
 
 MAX_HTML_BYTES = 5000000
 MIN_WORDS = 50
 MAX_URL_LEN = 115
-HAMMING_THRESH = 5
+HAMMING_THRESH = 4
 
 # To store the signature for similarity of pages we have already accepted
 seen_signature = []
@@ -205,13 +203,15 @@ def format_alphanum(token):
     formatted_token.append(token[current+1:].lower())
     return formatted_token
 
+regex = re.compile(r"[A-Za-z0-9]+(?:'[A-Za-z0-9]+)?") # Compile globally
+
 def extract_text(html: bytes, url: str) -> Iterable[Tuple[str, str]]:
     # creates a BeautifulSoup object that helps parse html beautifully
     # make sure to run {pip install beautifulsoup4}
     parser = BeautifulSoup(html, "html.parser")
     # we parse through each item in the html
 
-    do_not_parse = {'style', 'title', '[document]', 'script', 'meta', 'head'}
+    do_not_parse = {'style', 'title', 'script', 'noscript', 'meta', 'head'}
 
     url, _ = urldefrag(url)
 
@@ -219,43 +219,36 @@ def extract_text(html: bytes, url: str) -> Iterable[Tuple[str, str]]:
     if body is None:
         return
 
-    for item in parser.body.find_all(True):
-        # ensures that we DO NOT PARSE through potential style objects or javascript
-        if item.name in do_not_parse:
+    for tag in body.find_all(do_not_parse):
+        tag.decompose()
+
+    for item in body.find_all("a", href=True):
+        if "nofollow" in (item.get("rel") or []):
             continue
 
-        
-        # we will only parse text from the parent once bc of recursive=False
-        text = "".join(item.find_all(string=True, recursive=False)).strip()
-        if (item.name == 'a' and item.get("href")):
+        href = item.get("href")
+        if href:
+            href = href.strip()
+            low = href.lower()
 
-            if "nofollow" in (item.get("rel") or []):
+            # skip non-crawl schemes
+            if low.startswith(("mailto:", "javascript:", "tel:", "#")):
+                href = None
+
+        if href:
+            try:
+                abs_url = urljoin(url, href)
+            except:
                 continue
+            abs_url, _ = urldefrag(abs_url)       
+            yield abs_url, "URL"
 
-            href = item.get("href")
-            if href:
-                href = href.strip()
-                low = href.lower()
-
-                # skip non-crawl schemes
-                if low.startswith(("mailto:", "javascript:", "tel:")):
-                    href = None
-
-            if href:
-                try:
-                    abs_url = urljoin(url, href)
-                except:
-                    continue
-                abs_url, _ = urldefrag(abs_url)       
-                yield abs_url, "URL"
-
-        if (text):
+    for text in body.stripped_strings:
+        for token in regex.findall(text.lower()):
+            yield token, "word"
             # split text into tokens (split on whitespace)
-            tokens = format_alphanum(text)
             # list to store formatted tokens where token is first converted to lowercase then made into a Token object            
-            for token in tokens:
-                if token:
-                    yield token, "word"
+
     # Parses the html
     # Yields a stream of tokens of either words or URLS with an identifier constructed as Tuple
     # EX: ("hello", "word"), ("www.ics.uci.edu/", "URL")
