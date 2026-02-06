@@ -242,7 +242,10 @@ def extract_text(html: bytes, url: str) -> Iterable[Tuple[str, str]]:
                     href = None
 
             if href:
-                abs_url = urljoin(url, href)     # make absolute
+                try:
+                    abs_url = urljoin(url, href)
+                except:
+                    continue
                 abs_url, _ = urldefrag(abs_url)       
                 yield abs_url, "URL"
 
