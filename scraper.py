@@ -9,12 +9,12 @@ import re
 
 
 MAX_HTML_BYTES = 5000000
-MAX_SIGNATURE_REPEATS = 10
 MIN_WORDS = 50
 MAX_URL_LEN = 115
+HAMMING_THRESH = 5
 
-# To count the signature for similarity of pages
-signature_counts = {}
+# To store the signature for similarity of pages we have already accepted
+seen_signature = []
 logger = get_logger("CRAWLER")
 
 found_pages = set()
@@ -63,6 +63,7 @@ def extract_next_links(url, resp):
     # Return a list with the hyperlinks (as strings) scrapped from resp.raw_response.content
     found_pages.add(urldefrag(url).url)
     sub_domains[urlparse(url).hostname] += 1
+    seen = set()
 
     if resp.status != 200: # TODO: make this less strict?
         return []
@@ -78,12 +79,28 @@ def extract_next_links(url, resp):
     if not html: 
         return []
 
-    soup = BeautifulSoup(html, 'lxml')
-    words = soup.get_text()
-    words = re.findall("\w+(?:'\w+)?|[^\w\s]", words)
+
+    words = []
+    urls = []
+
+    for tok, kind in extract_text(html, url):
+        if kind == "word":
+            if tok and tok not in STOP_WORDS:
+                words.append(tok)
+        elif kind == "URL":
+            norm = normalize_url(tok)
+            if norm is not None and norm not in seen:
+                seen.add(norm)
+                urls.append(norm)
+
+    fp = page_signature(words, k=5)
+    if too_similar(fp):
+        logger.info(f"near-duplicate (simhash) skipped: {url}")
+        return []
+
+    
     for word in words: 
-        if word not in STOP_WORDS: 
-            word_freq[word] += 1
+        word_freq[word] += 1
 
     if len(words) == 0: # no information
         return []
@@ -104,32 +121,78 @@ def extract_next_links(url, resp):
         longest_page = url
     
 
-    urls = []
-    for link in soup.find_all('a'):
-        next_url = link.get('href')
-        if "nofollow" in link.get("rel", []): # avoid share links
-            continue
-        if next_url: 
-            try: 
-                abs_url = urljoin(url, next_url)
-            except ValueError: # not joinable, next_url must be invalid
-                continue
-            norm_url = normalize_url(abs_url)
-            if norm_url is not None:
-                urls.append(norm_url)
-            else: 
-                logger.info(f"invalid url not appended: {next_url}")
-        # print(link.get('href'))
-    
-    # word_count = len(words)   # To determine the information
+    # urls = []
+    # for link in soup.find_all('a'):
+    #     next_url = link.get('href')
+    #     if "nofollow" in link.get("rel", []): # avoid share links
+    #         continue
+    #     if next_url: 
+    #         try: 
+    #             abs_url = urljoin(url, next_url)
+    #         except ValueError: # not joinable, next_url must be invalid
+    #             continue
+    #         norm_url = normalize_url(abs_url)
+    #         if norm_url is not None:
+    #             urls.append(norm_url)
+    #         else: 
+    #             logger.info(f"invalid url not appended: {next_url}")
 
-    # signature = " ".join(words[:200])
-    # if similarity_compare(signature): # Build similarity signature/report
-    #     return []               
-
-    # if word_count < MIN_WORDS:
-    #     return []
     return urls
+
+def make_shingles(words, k = 5):
+    # Generate k-word shingles (sliding windows) from token list.
+    if len(words) < k:
+        return
+
+    for i in range(len(words) - k + 1):
+        yield " ".join(words[i:i+k])
+
+def encode_shingle(words):
+    # Encodes using a FNV-1a hash function
+    h = 14695981039346656037  # offset basis
+    fnv_prime = 1099511628211
+
+    for b in words.encode("utf-8"):
+        h ^= b
+        h = (h * fnv_prime) & 0xFFFFFFFFFFFFFFFF  # keep 64 bits
+
+    return h
+
+def bit_difference(a, b):
+    # Compute distance between two 64-bit integers.
+    return (a ^ b).bit_count()
+
+
+def page_signature(words, k = 5) -> int:
+    # initialize a 64-dimension vote vector
+
+    v = [0] * 64
+    for sh in make_shingles(words, k):
+        h = encode_shingle(sh)  # 64-bit int
+        for i in range(64):
+            if (h >> i) & 1:
+                #if bit == 1: add vote
+                v[i] += 1
+            else:
+                #if bit == 0: remove vote
+                v[i] -= 1
+    fp = 0
+    for i in range(64):
+        if v[i] >= 0:
+            # If more positive votes than negative, set bit to 
+            fp |= (1 << i)
+    
+    return fp
+
+def too_similar(fp: int) -> bool:
+    # Compare this signatures against all previously seen signatures.
+    # Returns True if any are within HAMMING_THRESH.
+    for old in seen_signature:
+        if bit_difference(fp, old) <= HAMMING_THRESH:
+            return True
+    seen_signature.append(fp)
+    return False
+
 
 # O(n) where n is the length of the token string
 def format_alphanum(token):
@@ -142,7 +205,7 @@ def format_alphanum(token):
     formatted_token.append(token[current+1:].lower())
     return formatted_token
 
-def extract_text(html: bytes) -> Iterable[Tuple[str, str]]:
+def extract_text(html: bytes, url: str) -> Iterable[Tuple[str, str]]:
     # creates a BeautifulSoup object that helps parse html beautifully
     # make sure to run {pip install beautifulsoup4}
     parser = BeautifulSoup(html, "html.parser")
@@ -150,14 +213,39 @@ def extract_text(html: bytes) -> Iterable[Tuple[str, str]]:
 
     do_not_parse = {'style', 'title', '[document]', 'script', 'meta', 'head'}
 
+    url, _ = urldefrag(url)
+
+    body = parser.body
+    if body is None:
+        return
+
     for item in parser.body.find_all(True):
         # ensures that we DO NOT PARSE through potential style objects or javascript
         if item.name in do_not_parse:
             continue
+
+        
         # we will only parse text from the parent once bc of recursive=False
         text = "".join(item.find_all(string=True, recursive=False)).strip()
         if (item.name == 'a' and item.get("href")):
-            yield item.get("href"), "URL"
+
+            if "nofollow" in (item.get("rel") or []):
+                continue
+
+            href = item.get("href")
+            if href:
+                href = href.strip()
+                low = href.lower()
+
+                # skip non-crawl schemes
+                if low.startswith(("mailto:", "javascript:", "tel:")):
+                    href = None
+
+            if href:
+                abs_url = urljoin(url, href)     # make absolute
+                abs_url, _ = urldefrag(abs_url)       
+                yield abs_url, "URL"
+
         if (text):
             # split text into tokens (split on whitespace)
             tokens = format_alphanum(text)
@@ -167,19 +255,8 @@ def extract_text(html: bytes) -> Iterable[Tuple[str, str]]:
                     yield token, "word"
     # Parses the html
     # Yields a stream of tokens of either words or URLS with an identifier constructed as Tuple
-    # EX: ("hello", "word"), ("www..ics.uci.edu/", "URL")
+    # EX: ("hello", "word"), ("www.ics.uci.edu/", "URL")
     
-
-def similarity_compare(signature: str)-> bool:
-    # Stores signatures of Pages into a Dictionary
-    # If signature count reaches threshold, Don't extract URL from page
-    if signature in signature_counts:
-        signature_counts[signature] += 1
-    else:
-        signature_counts[signature] = 1
-    
-    return signature_counts[signature] > MAX_SIGNATURE_REPEATS
-
 def is_valid(url):
     # Decide whether to crawl this url or not. 
     # If you decide to crawl it, return True; otherwise return False.
@@ -259,6 +336,6 @@ def finish(): # print out statistics
     logger.info(f"longest page: {longest_page}, length: {longest_length}")
     logger.info(f"most common 50: {Counter(word_freq).most_common(50)}")
     logger.info(f"subdomains: ")
-    for key, value in sorted(subdomains.items()): 
+    for key, value in sorted(sub_domains.items()): 
         logger.info(f"{key}, {value}")
 
