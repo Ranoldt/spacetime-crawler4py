@@ -76,12 +76,18 @@ def extract_next_links(url, resp):
     if not html: 
         return []
 
+    if len(html) > MAX_HTML_BYTES: # low value pages to filter before doing token work 
+        logger.info(f"ignoring url {url} with page size: {len(resp.raw_response.content)}")
+        return []
+
     urls = []
+    words = []
 
     for tok, kind in extract_text(html, url):
         if kind == "word":
             if tok and tok not in STOP_WORDS:
-                word_freq[word] += 1
+                word_freq[tok] += 1
+                words.append(tok)
         elif kind == "URL":
             norm = normalize_url(tok)
             if norm and norm not in found_pages and is_valid(norm):
@@ -98,9 +104,6 @@ def extract_next_links(url, resp):
 
     value_score = len(words)/len(html)
 
-    if len(html) > MAX_HTML_BYTES: # low value pages
-        logger.info(f"ignoring url {url} with page size: {len(resp.raw_response.content)}")
-        return []
     if len(html) > MAX_HTML_BYTES/2 and value_score < 0.05: # low value pages
         logger.info(f"ignoring url {url} with page size: {len(resp.raw_response.content)}, value_score: {value_score}")
         return []
