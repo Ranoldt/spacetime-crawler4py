@@ -251,6 +251,12 @@ def is_valid(url):
             logger.info(f"detected and skipped calendar trap at: {url}")
             return False
 
+        if (parsed.netloc=="ics.uci.edu"): # calendar trap
+            if "/events" in parsed.path:
+                if not "/events/list" in parsed.path: 
+                    logger.info(f"detected and skipped calendar trap at: {url}")
+                    return False
+
         # Skip photo gallery directories (low textual value, many near-duplicate pages)
         if "/pix/" in parsed.path:
             return False
