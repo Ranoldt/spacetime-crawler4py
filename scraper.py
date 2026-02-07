@@ -13,7 +13,7 @@ HAMMING_THRESH = 4
 
 # To store the signature for similarity of pages we have already accepted
 seen_signature = []
-logger = get_logger("CRAWLER")
+logger = get_logger("SCRAPER")
 
 found_pages = set()
 longest_page, longest_length = "", 0
@@ -46,7 +46,7 @@ sub_domains = defaultdict(int)
 
 def scraper(url, resp):
     links = extract_next_links(url, resp)
-    return [link for link in links if is_valid(link)]
+    return [link for link in links]
 
 def extract_next_links(url, resp):
     global longest_page, longest_length
@@ -61,7 +61,6 @@ def extract_next_links(url, resp):
     # Return a list with the hyperlinks (as strings) scrapped from resp.raw_response.content
     found_pages.add(urldefrag(url).url)
     sub_domains[urlparse(url).hostname] += 1
-    seen = set()
 
     if resp.status != 200: # TODO: make this less strict?
         return []
@@ -77,18 +76,16 @@ def extract_next_links(url, resp):
     if not html: 
         return []
 
-
-    words = []
     urls = []
 
     for tok, kind in extract_text(html, url):
         if kind == "word":
             if tok and tok not in STOP_WORDS:
-                words.append(tok)
+                word_freq[word] += 1
         elif kind == "URL":
             norm = normalize_url(tok)
-            if norm is not None and norm not in seen:
-                seen.add(norm)
+            if norm and norm not in found_pages and is_valid(norm):
+                found_pages.add(norm)
                 urls.append(norm)
 
     fp = page_signature(words, k=5)
@@ -96,14 +93,8 @@ def extract_next_links(url, resp):
         logger.info(f"near-duplicate (simhash) skipped: {url}")
         return []
 
-    
-    for word in words: 
-        word_freq[word] += 1
-
     if len(words) == 0: # no information
         return []
-
-    # TODO: infinite traps
 
     value_score = len(words)/len(html)
 
@@ -117,23 +108,6 @@ def extract_next_links(url, resp):
     if len(words) > longest_length: 
         longest_length = len(words)
         longest_page = url
-    
-
-    # urls = []
-    # for link in soup.find_all('a'):
-    #     next_url = link.get('href')
-    #     if "nofollow" in link.get("rel", []): # avoid share links
-    #         continue
-    #     if next_url: 
-    #         try: 
-    #             abs_url = urljoin(url, next_url)
-    #         except ValueError: # not joinable, next_url must be invalid
-    #             continue
-    #         norm_url = normalize_url(abs_url)
-    #         if norm_url is not None:
-    #             urls.append(norm_url)
-    #         else: 
-    #             logger.info(f"invalid url not appended: {next_url}")
 
     return urls
 
@@ -190,18 +164,6 @@ def too_similar(fp: int) -> bool:
             return True
     seen_signature.append(fp)
     return False
-
-
-# O(n) where n is the length of the token string
-def format_alphanum(token):
-    current = -1
-    formatted_token = []
-    for i in range(len(token)):
-        if not token[i].isalnum():
-            formatted_token.append(token[current+1:i].lower())
-            current = i
-    formatted_token.append(token[current+1:].lower())
-    return formatted_token
 
 regex = re.compile(r"[A-Za-z0-9]+(?:'[A-Za-z0-9]+)?") # Compile globally
 
@@ -261,13 +223,29 @@ def is_valid(url):
         if len(url) > MAX_URL_LEN: # potential crawler trap: URL getting longer
             return False
         parsed = urlparse(url)
+
+        if parsed.scheme not in set(["http", "https"]):
+            return False
+
+        allowed = {"ics.uci.edu", "cs.uci.edu", "informatics.uci.edu", "stat.uci.edu"}
+        if not any(parsed.hostname == d or parsed.hostname.endswith("." + d) for d in allowed):
+            return False
+
         if "do" in parse_qs(parsed.query): # do=_ query trap
             logger.info(f"detected and skipped do=_ query trap at: {url}")
             return False
-        if parsed.scheme not in set(["http", "https"]):
-            return False
-        allowed = {"ics.uci.edu", "cs.uci.edu", "informatics.uci.edu", "stat.uci.edu"}
-        if not any(parsed.hostname == d or parsed.hostname.endswith("." + d) for d in allowed):
+
+        if parsed.netloc == "grape.ics.uci.edu": # handling grape.ics.uci.edu trap
+            if "wiki" in parsed.path and "timeline" in parsed.path:
+                return False
+            queries = parse_qs(parsed.query)
+            if "action" in queries: 
+                return False
+            if "version" in queries: 
+                return False
+
+        if (parsed.netloc=="isg.ics.uci.edu" or parsed.netloc=="wics.ics.uci.edu") and "/events/" in parsed.path: # calendar trap
+            logger.info(f"detected and skipped calendar trap at: {url}")
             return False
 
         # Skip photo gallery directories (low textual value, many near-duplicate pages)
@@ -306,19 +284,6 @@ def normalize_url(url):
         new_url += f":{p.port}"
 
     new_url += p.path
-
-    if p.netloc == "grape.ics.uci.edu": # handling grape.ics.uci.edu trap
-        if "wiki" in p.path and "timeline" in p.path:
-            return None
-        queries = parse_qs(p.query)
-        if "action" in queries: 
-            return None
-        if "version" in queries: 
-            return None
-
-    if (p.netloc=="isg.ics.uci.edu" or p.netloc=="wics.ics.uci.edu") and "/events/" in p.path: # calendar trap
-        logger.info(f"detected and skipped calendar trap at: {url}")
-        return None
 
     if p.query:
         # handling C=_;O=_ trap
