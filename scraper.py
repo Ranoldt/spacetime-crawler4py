@@ -9,7 +9,7 @@ from collections import Counter
 MAX_HTML_BYTES = 5000000
 MIN_WORDS = 50
 MAX_URL_LEN = 115
-HAMMING_THRESH = 4
+HAMMING_THRESH = 3
 
 # To store the signature for similarity of pages we have already accepted
 seen_signature = []
